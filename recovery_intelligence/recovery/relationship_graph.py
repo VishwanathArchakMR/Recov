@@ -162,15 +162,29 @@ def build_relationship_graph(
 
             if weight >= min_w or sim >= float(settings.COSINE_SIMILARITY_THRESHOLD):
                 # Classify relationship basis
-                if prox >= 0.50 and type_m >= 0.80:
+                archive_types = {"zip", "tar", "7z", "rar", "wim", "gz", "bz2"}
+                is_archive_pair = (frag_a.type_hint in archive_types or frag_b.type_hint in archive_types)
+
+                if is_archive_pair and frag_a.type_hint == frag_b.type_hint and (frag_a.offset + frag_a.length == frag_b.offset or frag_b.offset + frag_b.length == frag_a.offset):
+                    rel_basis = "ARCHIVE_STRUCTURAL_CONTINUITY"
+                    rel_type = "MUST_FOLLOW"
+                elif is_archive_pair and frag_a.type_hint == frag_b.type_hint:
+                    rel_basis = "ARCHIVE_SAME_CONTAINER"
+                    rel_type = "SAME_ARCHIVE"
+                elif prox >= 0.50 and type_m >= 0.80:
                     rel_basis = "STRUCTURAL_SPATIAL"
+                    rel_type = "MAY_FOLLOW"
                 elif frag_a.metadata.get("extent_linked") or frag_b.metadata.get("extent_linked"):
                     rel_basis = "FILESYSTEM_EXTENT"
+                    rel_type = "SAME_MEMBER"
                 else:
                     rel_basis = "HEURISTIC_SIMILARITY"
+                    rel_type = "MAY_FOLLOW"
 
                 # Build human-readable reason
                 reasons = []
+                if is_archive_pair and frag_a.type_hint == frag_b.type_hint:
+                    reasons.append(f"archive {frag_a.type_hint.upper()} structural continuity")
                 if sim >= 0.7:
                     reasons.append(f"high vector similarity ({sim:.2f})")
                 elif sim >= 0.4:
@@ -190,6 +204,7 @@ def build_relationship_graph(
                     "type_match": type_m,
                     "edge_weight": weight,
                     "relationship_basis": rel_basis,
+                    "relationship_type": rel_type,
                     "reason": reason_str,
                 })
 

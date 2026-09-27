@@ -25,6 +25,13 @@ EXTENSION_MAP = {
     "xlsx": ".xlsx",
     "pptx": ".pptx",
     "zip": ".zip",
+    "tar": ".tar",
+    "7z": ".7z",
+    "rar": ".rar",
+    "wim": ".wim",
+    "gz": ".gz",
+    "gzip": ".gz",
+    "bz2": ".bz2",
     "sqlite": ".sqlite",
     "sqlite3": ".sqlite",
     "db": ".sqlite",
@@ -67,6 +74,18 @@ def infer_cluster_file_type(cluster: FragmentCluster, fragments: List[Fragment])
             return "pdf"
         elif raw_b.startswith(b"PK\x03\x04"):
             return "zip"
+        elif raw_b.startswith(b"7z\xbc\xaf\x27\x1c"):
+            return "7z"
+        elif raw_b.startswith(b"Rar!\x1a\x07"):
+            return "rar"
+        elif raw_b.startswith(b"MSWIM\x00\x00\x00"):
+            return "wim"
+        elif raw_b.startswith(b"BZh"):
+            return "bz2"
+        elif raw_b.startswith(b"\x1f\x8b"):
+            return "gz"
+        elif len(raw_b) >= 512 and b"ustar" in raw_b[257:265]:
+            return "tar"
         elif raw_b.startswith(b"SQLite format 3\x00"):
             return "sqlite"
         elif len(raw_b) >= 12 and raw_b[:4] == b"RIFF" and raw_b[8:12] == b"WAVE":
@@ -87,6 +106,15 @@ def reconstruct_structured_file(
     and gap metadata, assembles candidate bytes, writes the candidate to disk, and
     validates with the corresponding real parser.
     """
+    # 1. Determine candidate file type
+    file_type = infer_cluster_file_type(cluster, fragments)
+    
+    # If archive type, delegate to format-aware archive reconstructor
+    archive_types = {"zip", "tar", "7z", "rar", "wim", "gz", "gzip", "bz2"}
+    if file_type in archive_types:
+        from .archive_reconstruction import reconstruct_archive_cluster
+        return reconstruct_archive_cluster(cluster, fragments, output_dir=output_dir)
+
     candidate_id = f"recon_{cluster.cluster_id}"
     out_dir = output_dir or settings.RECOVERED_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -107,9 +135,6 @@ def reconstruct_structured_file(
             recovery_status="UNRECOVERABLE",
             recovery_state="UNRECOVERABLE",
         )
-
-    # 1. Determine candidate file type
-    file_type = infer_cluster_file_type(cluster, fragments)
     ext = EXTENSION_MAP.get(file_type, ".bin")
     candidate_path = out_dir / f"{candidate_id}{ext}"
 

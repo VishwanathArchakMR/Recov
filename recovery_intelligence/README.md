@@ -1,4 +1,4 @@
-# AI-Assisted Intelligent Data Recovery & Digital Evidence Reconstruction
+# RECOV
 **CALMSTACKS 24H HACKATHON PROJECT**
 
 ## Project Overview

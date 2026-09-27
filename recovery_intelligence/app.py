@@ -41,12 +41,12 @@ from pipeline import (
 )
 
 st.set_page_config(
-    page_title="AI-Assisted Intelligent Data Recovery",
+    page_title="Recov",
     page_icon="🔍",
     layout="wide",
 )
 
-st.title("AI-Assisted Intelligent Data Recovery & Digital Evidence Reconstruction")
+st.title("Recov")
 st.caption("CALMSTACKS 24H HACKATHON Project | Full End-to-End Autonomous Pipeline & Forensic Recovery Workspace")
 
 

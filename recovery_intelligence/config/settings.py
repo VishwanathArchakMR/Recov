@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel, Field
 
 class Settings(BaseModel):
@@ -62,6 +63,8 @@ class Settings(BaseModel):
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     LLM_PROVIDER: str = "gemini"  # "gemini" or "anthropic"
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY", None)
     
     # Thresholds
     ENTROPY_HIGH_THRESHOLD: float = 7.5

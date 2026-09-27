@@ -10,7 +10,13 @@ from .validation import validate_reconstruction
 
 
 def read_fragment_bytes(fragment: Fragment) -> bytes:
-    """Read fragment bytes strictly in read-only mode from evidence source."""
+    """Read fragment bytes strictly in read-only mode from metadata or evidence source."""
+    if fragment.metadata and "raw_bytes" in fragment.metadata:
+        raw = fragment.metadata["raw_bytes"]
+        if isinstance(raw, bytes):
+            return raw
+        elif isinstance(raw, str):
+            return raw.encode("utf-8")
     if not fragment.source or not os.path.exists(fragment.source):
         return b""
     try:

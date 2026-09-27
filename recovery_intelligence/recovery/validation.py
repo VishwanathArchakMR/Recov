@@ -435,11 +435,71 @@ def validate_pcx(data: bytes) -> Tuple[bool, str]:
         return False, f"Pillow PCX validation failed: {str(e)}"
 
 
+def validate_tar(data: bytes) -> Tuple[bool, str]:
+    """Validate TAR archive structure and checksums using TarArchiveAdapter."""
+    from .archive_adapter import get_archive_adapter
+    adapter = get_archive_adapter("tar")
+    if not adapter:
+        return False, "TAR adapter unavailable"
+    valid, msg, _ = adapter.validate_candidate(data)
+    return valid, msg
+
+
+def validate_7z(data: bytes) -> Tuple[bool, str]:
+    """Validate 7Z archive signature and CRC headers using SevenZipArchiveAdapter."""
+    from .archive_adapter import get_archive_adapter
+    adapter = get_archive_adapter("7z")
+    if not adapter:
+        return False, "7Z adapter unavailable"
+    valid, msg, _ = adapter.validate_candidate(data)
+    return valid, msg
+
+
+def validate_rar(data: bytes) -> Tuple[bool, str]:
+    """Validate RAR archive headers and block records using RarArchiveAdapter."""
+    from .archive_adapter import get_archive_adapter
+    adapter = get_archive_adapter("rar")
+    if not adapter:
+        return False, "RAR adapter unavailable"
+    valid, msg, _ = adapter.validate_candidate(data)
+    return valid, msg
+
+
+def validate_wim(data: bytes) -> Tuple[bool, str]:
+    """Validate WIM archive header structure using WimArchiveAdapter."""
+    from .archive_adapter import get_archive_adapter
+    adapter = get_archive_adapter("wim")
+    if not adapter:
+        return False, "WIM adapter unavailable"
+    valid, msg, _ = adapter.validate_candidate(data)
+    return valid, msg
+
+
+def validate_gz(data: bytes) -> Tuple[bool, str]:
+    """Validate GZIP compressed stream using GzArchiveAdapter."""
+    from .archive_adapter import get_archive_adapter
+    adapter = get_archive_adapter("gz")
+    if not adapter:
+        return False, "GZ adapter unavailable"
+    valid, msg, _ = adapter.validate_candidate(data)
+    return valid, msg
+
+
+def validate_bz2(data: bytes) -> Tuple[bool, str]:
+    """Validate BZIP2 compressed stream using Bz2ArchiveAdapter."""
+    from .archive_adapter import get_archive_adapter
+    adapter = get_archive_adapter("bz2")
+    if not adapter:
+        return False, "BZ2 adapter unavailable"
+    valid, msg, _ = adapter.validate_candidate(data)
+    return valid, msg
+
+
 def validate_reconstruction(file_type: str, data: bytes) -> Tuple[bool, str]:
     """
     Dispatch structural validation based on file type.
     
-    Supported types: jpeg, png, gif, bmp, pdf, docx, xlsx, pptx, zip, sqlite, wav, text.
+    Supported types: jpeg, png, gif, bmp, tiff, pcx, pdf, docx, xlsx, pptx, zip, tar, 7z, rar, wim, gz, bz2, sqlite, wav, text.
     """
     if not data:
         return False, "Candidate byte buffer is empty"
@@ -467,6 +527,18 @@ def validate_reconstruction(file_type: str, data: bytes) -> Tuple[bool, str]:
         return validate_pptx(data)
     elif ft == "zip":
         return validate_zip(data)
+    elif ft == "tar":
+        return validate_tar(data)
+    elif ft == "7z":
+        return validate_7z(data)
+    elif ft == "rar":
+        return validate_rar(data)
+    elif ft == "wim":
+        return validate_wim(data)
+    elif ft in ("gz", "gzip"):
+        return validate_gz(data)
+    elif ft == "bz2":
+        return validate_bz2(data)
     elif ft in ("sqlite", "sqlite3", "db"):
         return validate_sqlite(data)
     elif ft in ("wav", "wave"):

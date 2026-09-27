@@ -18,7 +18,7 @@ def test_streamlit_app_full_workflow():
     assert not at.exception, f"App raised exception on initial run: {at.exception}"
 
     # Verify title
-    assert "AI-Assisted Intelligent Data Recovery" in at.title[0].value
+    assert "Recov" in at.title[0].value
 
     # Verify primary button is present in sidebar
     full_run_buttons = [b for b in at.sidebar.button if "RUN FULL RECOVERY ANALYSIS" in b.label]

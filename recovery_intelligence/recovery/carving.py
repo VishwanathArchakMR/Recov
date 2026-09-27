@@ -22,6 +22,7 @@ Design principles:
 
 import mmap
 import struct
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -152,6 +153,60 @@ SIGNATURE_REGISTRY: Tuple[SignatureDefinition, ...] = (
         default_length=4096,
         max_scan_size=50 * 1024 * 1024,
         min_size=44,
+    ),
+    # 7-Zip
+    SignatureDefinition(
+        type_hint="7z",
+        header=b"7z\xbc\xaf\x27\x1c",
+        footer=None,
+        default_length=4096,
+        max_scan_size=50 * 1024 * 1024,
+        min_size=32,
+    ),
+    # RAR v4
+    SignatureDefinition(
+        type_hint="rar",
+        header=b"Rar!\x1a\x07\x00",
+        footer=None,
+        default_length=4096,
+        max_scan_size=50 * 1024 * 1024,
+        min_size=20,
+    ),
+    # RAR v5
+    SignatureDefinition(
+        type_hint="rar",
+        header=b"Rar!\x1a\x07\x01\x00",
+        footer=None,
+        default_length=4096,
+        max_scan_size=50 * 1024 * 1024,
+        min_size=20,
+    ),
+    # WIM (Microsoft Windows Imaging Format)
+    SignatureDefinition(
+        type_hint="wim",
+        header=b"MSWIM\x00\x00\x00",
+        footer=None,
+        default_length=4096,
+        max_scan_size=50 * 1024 * 1024,
+        min_size=208,
+    ),
+    # BZ2 (BZip2 compressed stream)
+    SignatureDefinition(
+        type_hint="bz2",
+        header=b"BZh",
+        footer=None,
+        default_length=4096,
+        max_scan_size=50 * 1024 * 1024,
+        min_size=14,
+    ),
+    # GZ (GZip compressed stream)
+    SignatureDefinition(
+        type_hint="gz",
+        header=b"\x1f\x8b\x08",
+        footer=None,
+        default_length=4096,
+        max_scan_size=50 * 1024 * 1024,
+        min_size=18,
     ),
 )
 
@@ -573,6 +628,115 @@ def _validate_wav_header(
     return cand_len, True
 
 
+def _find_7z_candidate_boundary(
+    data: Union[bytes, mmap.mmap], h_pos: int, total_size: int, max_scan_size: int
+) -> Tuple[int, bool]:
+    """Validate 7z signature header and calculate span from next header offset/size."""
+    if h_pos + 32 > total_size:
+        return min(4096, total_size - h_pos), False
+    hdr = _read_bytes(data, h_pos, h_pos + 32)
+    start_crc = struct.unpack_from("<I", hdr, 8)[0]
+    next_off, next_size, next_crc = struct.unpack_from("<QQI", hdr, 12)
+    calc_crc = zlib.crc32(hdr[12:32])
+    if calc_crc != start_crc:
+        return min(4096, total_size - h_pos), False
+    decl_size = 32 + next_off + next_size
+    cand_len = min(decl_size, max_scan_size, total_size - h_pos)
+    return cand_len, True
+
+
+def _find_rar_candidate_boundary(
+    data: Union[bytes, mmap.mmap], h_pos: int, total_size: int, max_scan_size: int
+) -> Tuple[int, bool]:
+    """Validate RAR signature and iterate blocks until ENDARC or safe window."""
+    sig_len = 7 if _read_bytes(data, h_pos, h_pos + 7) == b"Rar!\x1a\x07\x00" else 8
+    pos = h_pos + sig_len
+    has_main = False
+    has_end = False
+    while pos + 7 <= total_size:
+        blk = _read_bytes(data, pos, pos + 7)
+        crc, h_type, flags, h_size = struct.unpack("<HBHH", blk)
+        if h_size == 0 or pos + h_size > total_size:
+            break
+        add_size = 0
+        if flags & 0x8000 and pos + 11 <= total_size:
+            add_size = struct.unpack("<I", _read_bytes(data, pos + 7, pos + 11))[0]
+        if h_type == 0x73:
+            has_main = True
+        elif h_type == 0x7B:
+            has_end = True
+            pos += h_size + add_size
+            break
+        pos += h_size + add_size
+        if pos - h_pos > max_scan_size:
+            break
+    if not has_main:
+        return min(4096, total_size - h_pos), False
+    cand_len = min(pos - h_pos, max_scan_size, total_size - h_pos)
+    return cand_len, has_end
+
+
+def _find_wim_candidate_boundary(
+    data: Union[bytes, mmap.mmap], h_pos: int, total_size: int, max_scan_size: int
+) -> Tuple[int, bool]:
+    """Validate WIM 208-byte header."""
+    if h_pos + 208 > total_size:
+        return min(4096, total_size - h_pos), False
+    hdr = _read_bytes(data, h_pos, h_pos + 24)
+    sig, hdr_size, ver, flags, chunk_size = struct.unpack("<8sIIII", hdr)
+    if hdr_size != 208 or ver != 0x00010D00:
+        return min(4096, total_size - h_pos), False
+    # Next competing header or default header block
+    next_hdr = data.find(b"MSWIM\x00\x00\x00", h_pos + 8, min(total_size, h_pos + max_scan_size))
+    if next_hdr != -1:
+        return next_hdr - h_pos, True
+    return min(4096, total_size - h_pos), True
+
+
+def _find_bz2_candidate_boundary(
+    data: Union[bytes, mmap.mmap], h_pos: int, total_size: int, max_scan_size: int
+) -> Tuple[int, bool]:
+    """Validate BZ2 header and scan for EOS marker or safe boundary."""
+    if h_pos + 10 > total_size:
+        return min(4096, total_size - h_pos), False
+    hdr = _read_bytes(data, h_pos, h_pos + 10)
+    if hdr[:3] != b"BZh" or chr(hdr[3]) not in "123456789" or hdr[4:10] != b"1AY&SY":
+        return min(4096, total_size - h_pos), False
+    max_scan = min(total_size, h_pos + max_scan_size)
+    eos_pos = data.find(b"\x17rE8P\x90", h_pos + 10, max_scan)
+    if eos_pos != -1:
+        return min((eos_pos + 10) - h_pos, total_size - h_pos), True
+    # Look for next competing BZ2 or 7Z or RAR or ZIP header
+    next_h = data.find(b"BZh", h_pos + 3, max_scan)
+    if next_h != -1:
+        return next_h - h_pos, False
+    return min(4096, total_size - h_pos), False
+
+
+def _find_gz_candidate_boundary(
+    data: Union[bytes, mmap.mmap], h_pos: int, total_size: int, max_scan_size: int
+) -> Tuple[int, bool]:
+    """Validate GZ header and verify initial deflate stream decodability."""
+    if h_pos + 10 > total_size:
+        return min(4096, total_size - h_pos), False
+    hdr = _read_bytes(data, h_pos, h_pos + 10)
+    if hdr[:3] != b"\x1f\x8b\x08":
+        return min(4096, total_size - h_pos), False
+    flg, os_byte = hdr[3], hdr[9]
+    if flg > 0x1F or (os_byte > 13 and os_byte != 255):
+        return min(4096, total_size - h_pos), False
+    try:
+        sample = _read_bytes(data, h_pos, min(total_size, h_pos + 4096))
+        dec = zlib.decompressobj(wbits=31)
+        decomp = dec.decompress(sample)
+        if not decomp and not dec.unused_data:
+            return min(4096, total_size - h_pos), False
+    except Exception:
+        return min(4096, total_size - h_pos), False
+    # Next competing header or default block
+    return min(4096, total_size - h_pos), True
+
+
 # ─────────────────────────────────────────────────────────────
 # Core carve dispatch
 # ─────────────────────────────────────────────────────────────
@@ -617,6 +781,24 @@ def _carve_candidates_for_header(
         length, has_footer = _find_pdf_candidate_boundary(data, h_pos, total_size, sig.max_scan_size)
     elif sig.type_hint == "zip":
         length, has_footer, type_hint = _find_zip_candidate_boundary(data, h_pos, total_size, sig.max_scan_size)
+    elif sig.type_hint == "7z":
+        length, plausible = _find_7z_candidate_boundary(data, h_pos, total_size, sig.max_scan_size)
+        if not plausible:
+            return []
+        has_footer = plausible
+    elif sig.type_hint == "rar":
+        length, has_footer = _find_rar_candidate_boundary(data, h_pos, total_size, sig.max_scan_size)
+    elif sig.type_hint == "wim":
+        length, plausible = _find_wim_candidate_boundary(data, h_pos, total_size, sig.max_scan_size)
+        if not plausible:
+            return []
+        has_footer = plausible
+    elif sig.type_hint == "bz2":
+        length, has_footer = _find_bz2_candidate_boundary(data, h_pos, total_size, sig.max_scan_size)
+    elif sig.type_hint == "gz":
+        length, plausible = _find_gz_candidate_boundary(data, h_pos, total_size, sig.max_scan_size)
+        if not plausible:
+            return []
     elif sig.type_hint == "sqlite":
         length = _calculate_sqlite_candidate_length(data, h_pos, total_size)
     elif sig.type_hint == "wav":
